@@ -1,0 +1,415 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet"
+      href="{{ url_for('static', filename='style.css') }}">
+    <title>Facial Emotion Recognition | CNN</title>
+
+ 
+</head>
+
+<body>
+
+<header>
+    <h1>Facial Emotion Recognition</h1>
+    <p>Real-Time Emotion Detection Using Convolutional Neural Networks</p>
+</header>
+
+<main class="container">
+    <section class="card">
+
+        <div class="intro">
+            <h2>Emotion Detection System</h2>
+            <p>
+                Use your webcam for live predictions or upload a facial
+                image to identify its predicted emotion.
+            </p>
+        </div>
+
+        <div class="tabs">
+            <button class="primary" id="cameraTab" type="button">
+                📷 Live Webcam
+            </button>
+
+            <button class="secondary" id="uploadTab" type="button">
+                🖼 Upload Image
+            </button>
+        </div>
+
+        <div class="workspace">
+
+            <section class="panel">
+                <h3>Camera / Image Preview</h3>
+
+                <div class="screen">
+                    <video id="video" autoplay playsinline muted></video>
+
+                    <img id="preview" alt="Selected facial image">
+
+                    <div id="placeholder">
+                        <div style="font-size:42px;">📷</div>
+                        <p>Camera is off</p>
+                        <p>Select Start Camera to begin.</p>
+                    </div>
+                </div>
+
+                <div class="controls">
+                    <button class="primary" id="startCamera" type="button">
+                        Start Camera
+                    </button>
+
+                    <button class="secondary" id="stopCamera"
+                            type="button" disabled>
+                        Stop Camera
+                    </button>
+
+                    <label class="upload-label" for="imageInput">
+                        Choose Image
+                    </label>
+
+                    <input id="imageInput" type="file" accept="image/*">
+
+                    <button class="primary" id="predictImage"
+                            type="button" disabled>
+                        Predict Image
+                    </button>
+                </div>
+
+                <p id="status" role="status" aria-live="polite">
+                    Ready. Start your webcam or select an image.
+                </p>
+            </section>
+
+            <section class="panel">
+                <h3>Prediction Result</h3>
+
+                <div class="result-card">
+                    <div class="emotion-icon" id="emotionIcon">🙂</div>
+
+                    <p class="result-label">Predicted Emotion</p>
+
+                    <div id="emotion">Waiting...</div>
+
+                    <p id="confidence">Confidence: --</p>
+
+                    <div class="progress">
+                        <div id="confidenceBar"></div>
+                    </div>
+                </div>
+
+                <div class="info">
+                    <strong>About this prediction</strong>
+                    <p>
+                        The result comes from your trained CNN model.
+                        Confidence is the model's predicted probability,
+                        not a guarantee of correctness.
+                    </p>
+                </div>
+            </section>
+
+        </div>
+    </section>
+</main>
+
+<footer>
+    Facial Emotion Recognition System | CNN Deep Learning Project
+</footer>
+
+<script>
+    const video = document.getElementById("video");
+    const preview = document.getElementById("preview");
+    const placeholder = document.getElementById("placeholder");
+    const imageInput = document.getElementById("imageInput");
+
+    const emotionElement = document.getElementById("emotion");
+    const confidenceElement = document.getElementById("confidence");
+    const confidenceBar = document.getElementById("confidenceBar");
+    const emotionIcon = document.getElementById("emotionIcon");
+    const statusElement = document.getElementById("status");
+
+    const startButton = document.getElementById("startCamera");
+    const stopButton = document.getElementById("stopCamera");
+    const predictButton = document.getElementById("predictImage");
+
+    let cameraStream = null;
+    let predictionTimer = null;
+    let isPredicting = false;
+    let selectedFile = null;
+    let requestNumber = 0;
+    let previewUrl = null;
+
+    const emotionIcons = {
+        happy: "😄",
+        sad: "😢",
+        angry: "😠",
+        fear: "😨",
+        fearful: "😨",
+        surprise: "😲",
+        disgust: "🤢",
+        neutral: "😐"
+    };
+
+    function displayPrediction(data) {
+        if (!data || typeof data.emotion !== "string") {
+            throw new Error("Invalid prediction response from server.");
+        }
+
+        const predictedEmotion = data.emotion.trim();
+        const score = Number(data.confidence);
+
+        emotionElement.textContent = predictedEmotion;
+
+        emotionIcon.textContent =
+            emotionIcons[predictedEmotion.toLowerCase()] || "🙂";
+
+        if (Number.isFinite(score)) {
+            const safeScore = Math.max(0, Math.min(100, score));
+
+            confidenceElement.textContent =
+                "Confidence: " + safeScore.toFixed(1) + "%";
+
+            confidenceBar.style.width = safeScore + "%";
+        } else {
+            confidenceElement.textContent = "Confidence unavailable";
+            confidenceBar.style.width = "0%";
+        }
+    }
+
+    async function sendForPrediction(blob) {
+        const formData = new FormData();
+        formData.append("image", blob, "face.jpg");
+
+        const response = await fetch("/predict", {
+            method: "POST",
+            body: formData
+        });
+
+        let data;
+
+        try {
+            data = await response.json();
+        } catch {
+            throw new Error("Server did not return valid JSON.");
+        }
+
+        if (!response.ok) {
+            throw new Error(data.error || "Prediction failed.");
+        }
+
+        displayPrediction(data);
+    }
+
+    async function predictCameraFrame() {
+        if (
+            isPredicting ||
+            !cameraStream ||
+            video.readyState < 2 ||
+            video.videoWidth === 0
+        ) {
+            return;
+        }
+
+        isPredicting = true;
+        const currentRequest = requestNumber;
+
+        try {
+            const canvas = document.createElement("canvas");
+
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            canvas.getContext("2d").drawImage(
+                video, 0, 0, canvas.width, canvas.height
+            );
+
+            const blob = await new Promise(resolve => {
+                canvas.toBlob(resolve, "image/jpeg", 0.85);
+            });
+
+            if (
+                blob &&
+                currentRequest === requestNumber &&
+                cameraStream
+            ) {
+                await sendForPrediction(blob);
+
+                if (
+                    currentRequest === requestNumber &&
+                    cameraStream
+                ) {
+                    statusElement.textContent =
+                        "Live prediction is running.";
+                }
+            }
+        } catch (error) {
+            if (currentRequest === requestNumber) {
+                statusElement.textContent = error.message;
+            }
+        } finally {
+            isPredicting = false;
+        }
+    }
+
+    function stopCamera() {
+        requestNumber++;
+
+        if (predictionTimer !== null) {
+            clearInterval(predictionTimer);
+            predictionTimer = null;
+        }
+
+        if (cameraStream) {
+            cameraStream.getTracks().forEach(track => track.stop());
+            cameraStream = null;
+        }
+
+        video.srcObject = null;
+        startButton.disabled = false;
+        stopButton.disabled = true;
+    }
+
+    async function startCamera() {
+        stopCamera();
+
+        if (
+            !navigator.mediaDevices ||
+            !navigator.mediaDevices.getUserMedia
+        ) {
+            statusElement.textContent =
+                "Camera access requires localhost or HTTPS in a supported browser.";
+            return;
+        }
+
+        preview.style.display = "none";
+        video.style.display = "block";
+        placeholder.style.display = "none";
+
+        try {
+            statusElement.textContent =
+                "Requesting camera permission...";
+
+            cameraStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: "user" },
+                audio: false
+            });
+
+            video.srcObject = cameraStream;
+            await video.play();
+
+            startButton.disabled = true;
+            stopButton.disabled = false;
+
+            statusElement.textContent =
+                "Camera connected. Starting predictions...";
+
+            predictionTimer = setInterval(
+                predictCameraFrame, 700
+            );
+        } catch (error) {
+            stopCamera();
+
+            video.style.display = "none";
+            placeholder.style.display = "block";
+            placeholder.innerHTML =
+                "<div style='font-size:42px'>📷</div>" +
+                "<p>Camera could not be opened.</p>";
+
+            statusElement.textContent =
+                "Allow camera access and close other applications using the webcam.";
+        }
+    }
+
+    startButton.addEventListener("click", startCamera);
+
+    stopButton.addEventListener("click", () => {
+        stopCamera();
+        statusElement.textContent = "Camera stopped.";
+    });
+
+    document.getElementById("cameraTab").addEventListener("click", () => {
+        preview.style.display = "none";
+        video.style.display = cameraStream ? "block" : "none";
+        placeholder.style.display = cameraStream ? "none" : "block";
+
+        if (!cameraStream) {
+            placeholder.innerHTML =
+                "<div style='font-size:42px'>📷</div>" +
+                "<p>Camera is off</p>" +
+                "<p>Select Start Camera to begin.</p>";
+        }
+
+        statusElement.textContent = cameraStream
+            ? "Live webcam selected."
+            : "Click Start Camera to enable your webcam.";
+    });
+
+    document.getElementById("uploadTab").addEventListener("click", () => {
+        stopCamera();
+
+        video.style.display = "none";
+        preview.style.display = selectedFile ? "block" : "none";
+        placeholder.style.display = selectedFile ? "none" : "block";
+
+        placeholder.innerHTML =
+            "<div style='font-size:42px'>🖼️</div>" +
+            "<p>Select an image to begin.</p>";
+
+        statusElement.textContent =
+            "Choose an image and click Predict Image.";
+    });
+
+    imageInput.addEventListener("change", () => {
+        const file = imageInput.files[0];
+
+        if (!file) return;
+
+        if (!file.type.startsWith("image/")) {
+            selectedFile = null;
+            predictButton.disabled = true;
+            statusElement.textContent = "Please select a valid image.";
+            return;
+        }
+
+        stopCamera();
+        selectedFile = file;
+
+        if (previewUrl) {
+            URL.revokeObjectURL(previewUrl);
+        }
+
+        previewUrl = URL.createObjectURL(file);
+        preview.src = previewUrl;
+
+        preview.style.display = "block";
+        video.style.display = "none";
+        placeholder.style.display = "none";
+
+        predictButton.disabled = false;
+        statusElement.textContent =
+            "Image selected: " + file.name;
+    });
+
+    predictButton.addEventListener("click", async () => {
+        if (!selectedFile) return;
+
+        predictButton.disabled = true;
+        statusElement.textContent = "Predicting emotion...";
+
+        try {
+            await sendForPrediction(selectedFile);
+            statusElement.textContent = "Prediction complete.";
+        } catch (error) {
+            statusElement.textContent = error.message;
+        } finally {
+            predictButton.disabled = !selectedFile;
+        }
+    });
+
+    window.addEventListener("pagehide", stopCamera);
+</script>
+
+</body>
+</html>
