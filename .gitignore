@@ -1,0 +1,7 @@
+
+.venv/
+.venv-streamlit/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+dataset/
